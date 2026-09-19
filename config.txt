@@ -1,3 +1,3 @@
 removeDuplicates: 0
-numberOfBars: 20
+numberOfBars: 50
 strictData: 0
