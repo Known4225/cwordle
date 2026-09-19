@@ -18,22 +18,21 @@ enum {
 };
 
 enum {
-    GRAPH_DATA_LETTER, // char
-    GRAPH_DATA_COLOR, // GRAPH_COLOR_X
-    GRAPH_DATA_FREQUENCY, // int
-    GRAPH_DATA_NUMBER_OF_FIELDS,
+    GRAPH_TOP_LETTER, // char
+    GRAPH_TOP_COLOR, // GRAPH_COLOR_X
+    GRAPH_TOP_FREQUENCY, // int
+    GRAPH_TOP_NUMBER_OF_FIELDS,
 };
 
 enum {
     GRAPH_POINT_LETTER, // char
-    GRAPH_DATA_COLOR, // GRAPH_COLOR_X
-    GRAPH_DATA_NUMBER_OF_FIELDS,
+    GRAPH_POINT_COLOR, // GRAPH_COLOR_X
+    GRAPH_POINT_NUMBER_OF_FIELDS,
 };
 
 typedef struct {
-    list_t *points;
-    list_t *data; // data points collected from analysing past words
-    list_t *top; // top X data points of data (by frequency)
+    list_t *points; // raw data points collected from analysing past words
+    list_t *top; // data points sorted by frequency
     int32_t numberOfBars; // number of bars on the graph (and data points in top)
     int8_t strict;
 } cwordle_graph_t;
@@ -51,6 +50,7 @@ typedef struct {
 cwordle_t self;
 
 int32_t monthToInt(const char *month);
+void wordleSimulate(list_t *points, int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer);
 
 int32_t init() {
     self.mode = CWORLDLE_MODE_GRAPH;
@@ -79,13 +79,13 @@ int32_t init() {
     }
     for (int32_t i = 0; i < configFile -> length; i++) {
         if (streq(configFile -> data[i].r -> data[0].s, "removeDuplicates")) {
-            sscanf(configFile -> data[i].r -> data[1].s, "%d", &self.removeDuplicates);
+            sscanf(configFile -> data[i].r -> data[1].s, "%hhd", &self.removeDuplicates);
         }
         if (streq(configFile -> data[i].r -> data[0].s, "numberOfBars")) {
             sscanf(configFile -> data[i].r -> data[1].s, "%d", &self.graph.numberOfBars);
         }
         if (streq(configFile -> data[i].r -> data[0].s, "strictData")) {
-            sscanf(configFile -> data[i].r -> data[1].s, "%d", &self.graph.strict);
+            sscanf(configFile -> data[i].r -> data[1].s, "%hhd", &self.graph.strict);
         }
     }
     /* generate pastWords */
@@ -112,20 +112,42 @@ int32_t init() {
     // turtle_tools_reader_init("Duplicate Words", (unitype *) &self.duplicateWords, UNITYPE_LIST, 5, 90, 10);
 
     /* calculate graph data - the question to answer is... how many times would i get this data point if i were to use each of these words as my starting word */
-    self.graph.data = list_init();
+    self.graph.top = list_init();
     self.graph.points = list_init();
+    int32_t greenBucket[26] = {0};
+    int32_t yellowBucket[26] = {0};
+    int32_t blackBucket[26] = {0};
     if (self.graph.strict) {
         /* in strict mode, we obtain 5 * (self.pastWords -> length - 1) data points by applying the question from each word to the next in the sequence (collect 5 data points from applying the word on 01.01.2025 to 02.01.2025) */
         for (int32_t index = 0; index < self.pastWords -> length - 1; index++) {
-            wordleSimulate(self.graph.points, self.pastWords -> data[index].s, self.pastWords -> data[index + 1].s);
+            wordleSimulate(self.graph.points, greenBucket, yellowBucket, blackBucket, self.pastWords -> data[index].s, self.pastWords -> data[index + 1].s);
         }
+        // wordleSimulate(self.graph.points, "CLICK", "CAPON");
+        // wordleSimulate(self.graph.points, "GEODE", "LOOSE");
     } else {
         /* in non-strict mode, we obtain 5 * (self.pastWords -> length) * (self.pastWords -> length - 1) data points by applying the question to every other word (collect 5 * (self.pastWords -> length - 1) data points from applying the word on 01.01.2025 to every other word) */
+        for (int32_t i = 0; i < self.pastWords -> length; i++) {
+            for (int32_t j = 0; j < self.pastWords -> length; j++) {
+                if (i == j) {
+                    continue;
+                }
+                wordleSimulate(self.graph.points, greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[j].s);
+            }
+        }
     }
-    // for (int32_t point = 0; point < self)
-
-    /* calculate graph top */
-    self.graph.top = list_init();
+    for (int32_t i = 0; i < 26; i++) {
+        list_append(self.graph.top, (unitype) ('A' + i), 'c'); // GRAPH_TOP_LETTER
+        list_append(self.graph.top, (unitype) GRAPH_COLOR_GREEN, 'i'); // GRAPH_TOP_COLOR
+        list_append(self.graph.top, (unitype) greenBucket[i], 'i'); // GRAPH_TOP_FREQUENCY
+        list_append(self.graph.top, (unitype) ('A' + i), 'c'); // GRAPH_TOP_LETTER
+        list_append(self.graph.top, (unitype) GRAPH_COLOR_YELLOW, 'i'); // GRAPH_TOP_COLOR
+        list_append(self.graph.top, (unitype) yellowBucket[i], 'i'); // GRAPH_TOP_FREQUENCY
+        list_append(self.graph.top, (unitype) ('A' + i), 'c'); // GRAPH_TOP_LETTER
+        list_append(self.graph.top, (unitype) GRAPH_COLOR_BLACK, 'i'); // GRAPH_TOP_COLOR
+        list_append(self.graph.top, (unitype) blackBucket[i], 'i'); // GRAPH_TOP_FREQUENCY
+    }
+    list_sort_stride(self.graph.top, GRAPH_TOP_NUMBER_OF_FIELDS, GRAPH_TOP_FREQUENCY);
+    list_print(self.graph.top);
 
     return 0;
 }
@@ -136,17 +158,45 @@ void renderGraph() {
     }
 }
 
-void wordleSimulate(list_t *points, const char *word1, const char *word2) {
-    int8_t cache[5] = {0};
-    for (int32_t i = 0; i < 5; i++) { 
-        list_append(points, (unitype) word1[i], 'c');
-        if (word1[i] == word2[i]) {
+void wordleSimulate(list_t *points, int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer) {
+    int32_t startingIndex = points -> length;
+    int8_t cache[26] = {0};
+    for (int32_t i = 0; i < 5; i++) {
+        list_append(points, (unitype) guess[i], 'c');
+        if (guess[i] == answer[i]) {
             list_append(points, (unitype) GRAPH_COLOR_GREEN, 'i');
-            cache[i]++;
         } else {
             list_append(points, (unitype) GRAPH_COLOR_BLACK, 'i');
+            cache[answer[i] - 'A']++;
         }
     }
+    for (int32_t i = startingIndex; i < points -> length; i += GRAPH_POINT_NUMBER_OF_FIELDS) {
+        int8_t letter = points -> data[i + GRAPH_POINT_LETTER].c;
+        if (points -> data[i + GRAPH_POINT_COLOR].i == GRAPH_COLOR_BLACK) {
+            if (cache[letter - 'A'] > 0 && (answer[0] == letter || answer[1] == letter || answer[2] == letter || answer[3] == letter || answer[4] == letter)) {
+                cache[letter - 'A']--;
+                points -> data[i + GRAPH_POINT_COLOR].i = GRAPH_COLOR_YELLOW;
+            }
+        }
+        switch (points -> data[i + GRAPH_POINT_COLOR].i) {
+            case GRAPH_COLOR_GREEN:
+                greenBucket[letter - 'A']++;
+            break;
+            case GRAPH_COLOR_YELLOW:
+                yellowBucket[letter - 'A']++;
+            break;
+            case GRAPH_COLOR_BLACK:
+                blackBucket[letter - 'A']++;
+            break;
+        }
+    }
+    /* print */
+    // printf("%s and %s: %d %d %d %d %d\n", guess, answer,
+    //                            points -> data[startingIndex + 0 * GRAPH_POINT_NUMBER_OF_FIELDS + GRAPH_POINT_COLOR].i,
+    //                            points -> data[startingIndex + 1 * GRAPH_POINT_NUMBER_OF_FIELDS + GRAPH_POINT_COLOR].i,
+    //                            points -> data[startingIndex + 2 * GRAPH_POINT_NUMBER_OF_FIELDS + GRAPH_POINT_COLOR].i,
+    //                            points -> data[startingIndex + 3 * GRAPH_POINT_NUMBER_OF_FIELDS + GRAPH_POINT_COLOR].i,
+    //                            points -> data[startingIndex + 4 * GRAPH_POINT_NUMBER_OF_FIELDS + GRAPH_POINT_COLOR].i);
 }
 
 int32_t monthToInt(const char *month) {
