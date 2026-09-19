@@ -55,18 +55,22 @@ typedef struct {
     cwordle_mode_t mode;
     list_t *pastWordsRaw; // straight loaded from file
     list_t *validWords; // list of valid words
+    list_t *validWordsEligible; // list of ints, one for each validWord which says how many times that word is a guessable word after the first guess
     int8_t removeDuplicates; // pastWords include duplicates unless this is set to 1
     list_t *pastWords; // list of past words in order
     list_t *duplicateWords; // list of duplicate words
+    uint32_t lookup[26]; // array of bitfields for each character (for use in get_possible_words function)
     cwordle_graph_t graph;
 } cwordle_t;
 
 cwordle_t self;
 
 int32_t monthToInt(const char *month);
-void wordle_simulate_points(list_t *points, int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer);
 void wordle_simulate(int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer);
-void cwordle_set_color();
+void wordle_simulate_points(list_t *points, int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer);
+void wordle_simulate_check_words(int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer);
+int32_t get_possible_words(list_t *output, char *canvas, list_t *wordSet);
+void cwordle_set_color(int32_t color);
 
 int8_t cwordle_colors[] = {
     58, 58, 60, // CWORDLE_COLOR_BLACK
@@ -90,11 +94,27 @@ int32_t init() {
         return -1;
     }
     strcpy(constructedFilepath, osToolsFileDialog.executableFilepath);
-    strcat(constructedFilepath, "wordle-past-words.csv");
-    self.validWords = os_tools_load_csv_string(constructedFilepath, OSTOOLS_CSV_ROW);
-    if (self.validWords == NULL) {
-        printf("Could not load %s\n", constructedFilepath);
+    strcat(constructedFilepath, "wordle-valid-words.csv");
+    self.validWords = list_init();
+    FILE *validfp = fopen(constructedFilepath, "r");
+    if (validfp == NULL) {
+        printf("Could not open %s\n", constructedFilepath);
         return -1;
+    }
+    char validWord[10];
+    while (fgets(validWord, 10, validfp) != NULL) {
+        for (int32_t i = 0; i < 5; i++) {
+            if (validWord[i] >= 97 && validWord[i] <= 122) {
+                validWord[i] -= 32;
+            }
+        }
+        validWord[5] = '\0';
+        list_append(self.validWords, (unitype) validWord, 's');
+    }
+    fclose(validfp);
+    self.validWordsEligible = list_init();
+    for (int32_t i = 0; i < self.validWords -> length; i++) {
+        list_append(self.validWordsEligible, (unitype) 0, 'i');
     }
     strcpy(constructedFilepath, osToolsFileDialog.executableFilepath);
     strcat(constructedFilepath, "config.txt");
@@ -113,6 +133,10 @@ int32_t init() {
         if (streq(configFile -> data[i].r -> data[0].s, "strictData")) {
             sscanf(configFile -> data[i].r -> data[1].s, "%hhd", &self.graph.strict);
         }
+    }
+    /* get_possible_words */
+    for (int32_t i = 0; i < 26; i++) {
+        self.lookup[i] = 1 << i;
     }
     /* generate pastWords */
     self.pastWords = list_init();
@@ -134,8 +158,6 @@ int32_t init() {
         }
         list_append(self.pastWords, self.pastWordsRaw -> data[i].r -> data[4], 's');
     }
-    // turtle_tools_reader_init("Past Words", (unitype *) &self.pastWords, UNITYPE_LIST, -135, 90, 10);
-    // turtle_tools_reader_init("Duplicate Words", (unitype *) &self.duplicateWords, UNITYPE_LIST, 5, 90, 10);
 
     /* calculate graph data - the question to answer is... how many times would i get this data point if i were to use each of these words as my starting word */
     self.graph.top = list_init();
@@ -146,7 +168,7 @@ int32_t init() {
     if (self.graph.strict) {
         /* in strict mode, we obtain 5 * (self.pastWords -> length - 1) data points by applying the question from each word to the next in the sequence (collect 5 data points from applying the word on 01.01.2025 to 02.01.2025) */
         for (int32_t index = 0; index < self.pastWords -> length - 1; index++) {
-            wordle_simulate(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[index].s, self.pastWords -> data[index + 1].s);
+            wordle_simulate_check_words(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[index].s, self.pastWords -> data[index + 1].s);
         }
         // wordle_simulate_points(self.graph.points, "CLICK", "CAPON");
         // wordle_simulate_points(self.graph.points, "GEODE", "LOOSE");
@@ -157,7 +179,7 @@ int32_t init() {
                 if (i == j) {
                     continue;
                 }
-                wordle_simulate(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[j].s);
+                wordle_simulate_check_words(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[j].s);
             }
         }
     }
@@ -180,6 +202,12 @@ int32_t init() {
     self.graph.rightX = 280;
     self.graph.topY = 140;
     self.graph.bottomY = -130;
+
+    /* readers */
+    // turtle_tools_reader_init("Past Words", (unitype *) &self.pastWords, UNITYPE_LIST, -135, 90, 10);
+    // turtle_tools_reader_init("Duplicate Words", (unitype *) &self.duplicateWords, UNITYPE_LIST, 5, 90, 10);
+    turtle_tools_reader_init("Valid Words", (unitype *) &self.validWords, UNITYPE_LIST, -135, 90, 10);
+    turtle_tools_reader_init("Valid Words Eligible", (unitype *) &self.validWordsEligible, UNITYPE_LIST, 5, 90, 10);
     return 0;
 }
 
@@ -225,6 +253,38 @@ void render_graph() {
     
 }
 
+void wordle_simulate(int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer) {
+    int8_t cache[26] = {0};
+    int8_t colors[5] = {0};
+    for (int32_t i = 0; i < 5; i++) {
+        if (guess[i] == answer[i]) {
+            colors[i] = GRAPH_COLOR_GREEN;
+        } else {
+            cache[answer[i] - 'A']++;
+        }
+    }
+    for (int32_t i = 0; i < 5; i++) {
+        int8_t letter = guess[i];
+        if (colors[i] == GRAPH_COLOR_BLACK) {
+            if (cache[letter - 'A'] > 0 && (answer[0] == letter || answer[1] == letter || answer[2] == letter || answer[3] == letter || answer[4] == letter)) {
+                cache[letter - 'A']--;
+                colors[i] = GRAPH_COLOR_YELLOW;
+            }
+        }
+        switch (colors[i]) {
+            case GRAPH_COLOR_GREEN:
+                greenBucket[letter - 'A']++;
+            break;
+            case GRAPH_COLOR_YELLOW:
+                yellowBucket[letter - 'A']++;
+            break;
+            case GRAPH_COLOR_BLACK:
+                blackBucket[letter - 'A']++;
+            break;
+        }
+    }
+}
+
 void wordle_simulate_points(list_t *points, int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer) {
     int32_t startingIndex = points -> length;
     int8_t cache[26] = {0};
@@ -266,10 +326,12 @@ void wordle_simulate_points(list_t *points, int32_t *greenBucket, int32_t *yello
                                points -> data[startingIndex + 4 * GRAPH_POINT_NUMBER_OF_FIELDS + GRAPH_POINT_COLOR].i);
 }
 
-void wordle_simulate(int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer) {
+void wordle_simulate_check_words(int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer) {
     int8_t cache[26] = {0};
     int8_t colors[5] = {0};
+    char constructedCanvas[12] = {0};
     for (int32_t i = 0; i < 5; i++) {
+        constructedCanvas[i * 2] = guess[i];
         if (guess[i] == answer[i]) {
             colors[i] = GRAPH_COLOR_GREEN;
         } else {
@@ -295,7 +357,99 @@ void wordle_simulate(int32_t *greenBucket, int32_t *yellowBucket, int32_t *black
                 blackBucket[letter - 'A']++;
             break;
         }
+        constructedCanvas[i * 2 + 1] = colors[i];
     }
+    get_possible_words(self.validWordsEligible, constructedCanvas, self.validWords);
+}
+
+/* returns a list of words that could be the word given a canvas and a word set */
+int32_t get_possible_words(list_t *output, char *canvas, list_t *wordSet) {
+    if (output -> length != wordSet -> length) {
+        return 0;
+    }
+    /* create word whitelist and global count */
+    int8_t count[26] = {0}; // need to have at least count[letter] of a particular letter, if count[letter] is negative then you need to have exactly -count[letter] in a word
+    uint32_t whitelist[5] = {0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF}; // so i just learned today that you can only do one of these when it is 0
+    for (int32_t j = 0; j < 6; j++) {
+        int8_t currentCount[26] = {0};
+        for (int32_t i = 0; i < 5; i++) {
+            if (canvas[j * 10 + i * 2] == 0) {
+                goto GET_POSSIBLE_WORDS_END_LOOP;
+            }
+            switch (canvas[j * 10 + i * 2 + 1]) {
+                case CWORDLE_COLOR_GREEN:;
+                    if (currentCount[canvas[j * 10 + i * 2] - 'A'] < 0) {
+                        currentCount[canvas[j * 10 + i * 2] - 'A']--;
+                    } else {
+                        currentCount[canvas[j * 10 + i * 2] - 'A']++;
+                    }
+                    whitelist[i] = self.lookup[canvas[j * 10 + i * 2] - 'A']; // canvas uses capital letters
+                break;
+                case CWORDLE_COLOR_YELLOW:;
+                    for (int32_t k = 0; k < i; k++) {
+                        if (canvas[j * 10 + k * 2] == canvas[j * 10 + i * 2] && canvas[j * 10 + k * 2 + 1] == CWORDLE_COLOR_BLACK) {
+                            // printf("getPossibleWords: Invalid canvas configuration %d %d\n", i, j);
+                            return 0;
+                        }
+                    }
+                    currentCount[canvas[j * 10 + i * 2] - 'A']++; // cannot ever have currentCountDirection set as a black letter can never proceed a yellow letter
+                    whitelist[i] &= ~self.lookup[canvas[j * 10 + i * 2] - 'A']; // canvas uses capital letters
+                break;
+                case CWORDLE_COLOR_BLACK:;
+                    uint32_t blacklist = ~self.lookup[canvas[j * 10 + i * 2] - 'A']; // canvas uses capital letters
+                    int32_t startingIndex = i;
+                    if (currentCount[canvas[j * 10 + i * 2] - 'A'] == 0) {
+                        for (int32_t k = 0; k < 5; k++) {
+                            whitelist[k] &= blacklist;
+                        }
+                    } else {
+                        currentCount[canvas[j * 10 + i * 2] - 'A'] *= -1;
+                        whitelist[i] &= ~self.lookup[canvas[j * 10 + i * 2] - 'A'];
+                    }
+                break;
+                default:
+                break;
+            }
+        }
+        for (int32_t i = 0; i < 26; i++) {
+            if (count[i] >= 0 && abs(currentCount[i]) >= count[i]) {
+                count[i] = currentCount[i];
+            }
+        }
+    }
+    GET_POSSIBLE_WORDS_END_LOOP:;
+    /* gather all possible words given canvas into output */
+    int32_t outputLen = 0;
+    for (int32_t i = 0; i < wordSet -> length; i++) {
+        char *word = wordSet -> data[i].s;
+        char good = 1;
+        int8_t currentCount[26] = {0};
+        /* check whitelist */
+        for (int32_t j = 0; j < 5; j++) {
+            currentCount[word[j] - 'A']++;
+            if ((whitelist[j] & self.lookup[word[j] - 'A']) == 0) { // wordlists use capital letters
+                good = 0;
+                break;
+            }
+        }
+        for (int32_t i = 0; i < 26; i++) {
+            /* check if minimum global count is met */
+            if (abs(count[i]) > currentCount[i]) {
+                good = 0;
+                break;
+            }
+            /* check if exact global count is met (if information is available) */
+            if (count[i] < 0 && currentCount[i] != -count[i]) {
+                good = 0;
+                break;
+            }
+        }
+        if (good) {
+            outputLen++;
+            output -> data[i].i++;
+        }
+    }
+    return outputLen;
 }
 
 int32_t monthToInt(const char *month) {
