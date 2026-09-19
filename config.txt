@@ -1,0 +1,3 @@
+removeDuplicates: 0
+numberOfBars: 20
+strictData: 1
