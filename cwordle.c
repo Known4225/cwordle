@@ -40,6 +40,20 @@ enum {
     CWORDLE_COLOR_GRAPH,
 };
 
+enum {
+    FINAL_WORD,
+    FINAL_SCORE,
+    FINAL_VARIANCE,
+    FINAL_FREQUENCY,
+    FINAL_NUMBER_OF_FIELDS,
+};
+
+enum {
+    KEY_LMB,
+    KEY_RMB,
+    KEY_SPACE,
+};
+
 typedef struct {
     list_t *points; // raw data points collected from analysing past words (unused as of now)
     list_t *top; // data points sorted by frequency
@@ -59,7 +73,10 @@ typedef struct {
     int8_t removeDuplicates; // pastWords include duplicates unless this is set to 1
     list_t *pastWords; // list of past words in order
     list_t *duplicateWords; // list of duplicate words
+    list_t *swordleBest; // list of best words from swordle (and variance of each)
+    list_t *finalRankings; // words ranked by their combined score (using (1 / variance from swordle) * (frequency of applicability))
     uint32_t lookup[26]; // array of bitfields for each character (for use in get_possible_words function)
+    char keys[8];
     cwordle_graph_t graph;
 } cwordle_t;
 
@@ -112,6 +129,15 @@ int32_t init() {
         list_append(self.validWords, (unitype) validWord, 's');
     }
     fclose(validfp);
+    strcpy(constructedFilepath, osToolsFileDialog.executableFilepath);
+    strcat(constructedFilepath, "swordle-best.list");
+    FILE *swordlefp = fopen(constructedFilepath, "r");
+    if (swordlefp == NULL) {
+        printf("Could not open %s\n", constructedFilepath);
+        return -1;
+    }
+    self.swordleBest = list_read(swordlefp);
+    fclose(swordlefp);
     self.validWordsEligible = list_init();
     for (int32_t i = 0; i < self.validWords -> length; i++) {
         list_append(self.validWordsEligible, (unitype) 0, 'i');
@@ -167,8 +193,8 @@ int32_t init() {
     int32_t blackBucket[26] = {0};
     if (self.graph.strict) {
         /* in strict mode, we obtain 5 * (self.pastWords -> length - 1) data points by applying the question from each word to the next in the sequence (collect 5 data points from applying the word on 01.01.2025 to 02.01.2025) */
-        for (int32_t index = 0; index < self.pastWords -> length - 1; index++) {
-            wordle_simulate_check_words(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[index].s, self.pastWords -> data[index + 1].s);
+        for (int32_t i = 0; i < self.pastWords -> length - 1; i++) {
+            wordle_simulate_check_words(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[i + 1].s);
         }
         // wordle_simulate_points(self.graph.points, "CLICK", "CAPON");
         // wordle_simulate_points(self.graph.points, "GEODE", "LOOSE");
@@ -181,6 +207,13 @@ int32_t init() {
                 }
                 wordle_simulate_check_words(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[j].s);
             }
+            turtle_clear();
+            turtle_pen_color(0, 0, 0);
+            turtle_rectangle(-200, -10, 200, 10);
+            cwordle_set_color(CWORDLE_COLOR_GREEN);
+            double length = (198 * 2.0 * i) / self.pastWords -> length - 198;
+            turtle_rectangle(-198, -8, length, 8);
+            turtle_update();
         }
     }
     for (int32_t i = 0; i < 26; i++) {
@@ -203,11 +236,28 @@ int32_t init() {
     self.graph.topY = 140;
     self.graph.bottomY = -130;
 
+    /* calculate final rankings */
+    self.finalRankings = list_init();
+    for (int32_t i = 0; i < self.validWords -> length; i++) {
+        int32_t index = list_find(self.swordleBest, self.validWords -> data[i], 's');
+        if (index == -1) {
+            printf("Could not find %s in swordle-best.list\n", self.validWords -> data[i].s);
+            continue;
+        }
+        double finalScore = (1.0 / self.swordleBest -> data[index + 1].d) * self.validWordsEligible -> data[i].i;
+        list_append(self.finalRankings, self.validWords -> data[i], 's');
+        list_append(self.finalRankings, (unitype) finalScore, 'd');
+        list_append(self.finalRankings, self.swordleBest -> data[index + 1], 'd');
+        list_append(self.finalRankings, self.validWordsEligible -> data[i], 'i');
+    }
+    list_sort_stride(self.finalRankings, 4, 1);
+
     /* readers */
     // turtle_tools_reader_init("Past Words", (unitype *) &self.pastWords, UNITYPE_LIST, -135, 90, 10);
     // turtle_tools_reader_init("Duplicate Words", (unitype *) &self.duplicateWords, UNITYPE_LIST, 5, 90, 10);
-    turtle_tools_reader_init("Valid Words", (unitype *) &self.validWords, UNITYPE_LIST, -135, 90, 10);
-    turtle_tools_reader_init("Valid Words Eligible", (unitype *) &self.validWordsEligible, UNITYPE_LIST, 5, 90, 10);
+    // turtle_tools_reader_init("Valid Words", (unitype *) &self.validWords, UNITYPE_LIST, -135, 90, 10);
+    // turtle_tools_reader_init("Valid Words Eligible", (unitype *) &self.validWordsEligible, UNITYPE_LIST, 5, 90, 10);
+    turtle_tools_reader_init("Final Rankings", (unitype *) &self.finalRankings, UNITYPE_LIST, -135, 90, 10);
     return 0;
 }
 
@@ -251,6 +301,19 @@ void render_graph() {
     turtle_pen_up();
     /* render ticks */
     
+}
+
+void mouse() {
+    if (turtle_key_pressed(GLFW_KEY_SPACE) && turtle_key_pressed(GLFW_KEY_LEFT_CONTROL)) {
+        if (self.keys[KEY_SPACE] == 0) {
+            self.keys[KEY_SPACE] = 1;
+            FILE *fp = fopen("cwordle-final-rankings.list", "w");
+            list_write(fp, self.finalRankings);
+            fclose(fp);
+        }
+    } else {
+        self.keys[KEY_SPACE] = 0;
+    }
 }
 
 void wordle_simulate(int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer) {
@@ -611,6 +674,7 @@ int main(int argc, char *argv[]) {
         turtle_get_mouse_coordinates();
         turtle_clear();
         render_graph();
+        mouse();
         turtle_tools_update(); // update turtleTools
         turtle_tools_set_color(TT_COLOR_TEXT);
         turtle_text_write_stringf(-310, -170, 5, 0, "%.2lf, %.2lf", turtle.mouseX, turtle.mouseY);
