@@ -191,36 +191,44 @@ int32_t init() {
     }
 
     /* calculate graph data - the question to answer is... how many times would i get this data point if i were to use each of these words as my starting word */
-    if (self.overrideFinal == 0) {
-        self.graph.points = list_init(); // unused
-        int32_t greenBucket[26] = {0};
-        int32_t yellowBucket[26] = {0};
-        int32_t blackBucket[26] = {0};
-        if (self.graph.strict) {
-            /* in strict mode, we obtain 5 * (self.pastWords -> length - 1) data points by applying the question from each word to the next in the sequence (collect 5 data points from applying the word on 01.01.2025 to 02.01.2025) */
-            for (int32_t i = 0; i < self.pastWords -> length - 1; i++) {
+    self.graph.points = list_init(); // unused
+    int32_t greenBucket[26] = {0};
+    int32_t yellowBucket[26] = {0};
+    int32_t blackBucket[26] = {0};
+    if (self.graph.strict) {
+        /* in strict mode, we obtain 5 * (self.pastWords -> length - 1) data points by applying the question from each word to the next in the sequence (collect 5 data points from applying the word on 01.01.2025 to 02.01.2025) */
+        for (int32_t i = 0; i < self.pastWords -> length - 1; i++) {
+            if (self.overrideFinal) {
+                wordle_simulate(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[i + 1].s);
+            } else {
                 wordle_simulate_check_words(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[i + 1].s);
-                if (i % 10 == 0) {
-                    turtle_clear();
-                    turtle_pen_color(0, 0, 0);
-                    turtle_rectangle(-200, -10, 200, 10);
-                    cwordle_set_color(CWORDLE_COLOR_GREEN);
-                    double length = (198 * 2.0 * i) / (self.pastWords -> length - 1) - 198;
-                    turtle_rectangle(-198, -8, length, 8);
-                    turtle_update();
-                }
             }
-            // wordle_simulate_points(self.graph.points, "CLICK", "CAPON");
-            // wordle_simulate_points(self.graph.points, "GEODE", "LOOSE");
-        } else {
-            /* in non-strict mode, we obtain 5 * (self.pastWords -> length) * (self.pastWords -> length - 1) data points by applying the question to every other word (collect 5 * (self.pastWords -> length - 1) data points from applying the word on 01.01.2025 to every other word) */
-            for (int32_t i = 0; i < self.pastWords -> length; i++) {
-                for (int32_t j = 0; j < self.pastWords -> length; j++) {
-                    if (i == j) {
-                        continue;
-                    }
+            if (i % 10 == 0 && self.overrideFinal == 0) {
+                turtle_clear();
+                turtle_pen_color(0, 0, 0);
+                turtle_rectangle(-200, -10, 200, 10);
+                cwordle_set_color(CWORDLE_COLOR_GREEN);
+                double length = (198 * 2.0 * i) / (self.pastWords -> length - 1) - 198;
+                turtle_rectangle(-198, -8, length, 8);
+                turtle_update();
+            }
+        }
+        // wordle_simulate_points(self.graph.points, "CLICK", "CAPON");
+        // wordle_simulate_points(self.graph.points, "GEODE", "LOOSE");
+    } else {
+        /* in non-strict mode, we obtain 5 * (self.pastWords -> length) * (self.pastWords -> length - 1) data points by applying the question to every other word (collect 5 * (self.pastWords -> length - 1) data points from applying the word on 01.01.2025 to every other word) */
+        for (int32_t i = 0; i < self.pastWords -> length; i++) {
+            for (int32_t j = 0; j < self.pastWords -> length; j++) {
+                if (i == j) {
+                    continue;
+                }
+                if (self.overrideFinal) {
+                    wordle_simulate(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[j].s);
+                } else {
                     wordle_simulate_check_words(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[j].s);
                 }
+            }
+            if (self.overrideFinal == 0) {
                 turtle_clear();
                 turtle_pen_color(0, 0, 0);
                 turtle_rectangle(-200, -10, 200, 10);
@@ -230,20 +238,21 @@ int32_t init() {
                 turtle_update();
             }
         }
-        self.graph.top = list_init();
-        for (int32_t i = 0; i < 26; i++) {
-            list_append(self.graph.top, (unitype) ('A' + i), 'c'); // GRAPH_TOP_LETTER
-            list_append(self.graph.top, (unitype) GRAPH_COLOR_GREEN, 'i'); // GRAPH_TOP_COLOR
-            list_append(self.graph.top, (unitype) greenBucket[i], 'i'); // GRAPH_TOP_FREQUENCY
-            list_append(self.graph.top, (unitype) ('A' + i), 'c'); // GRAPH_TOP_LETTER
-            list_append(self.graph.top, (unitype) GRAPH_COLOR_YELLOW, 'i'); // GRAPH_TOP_COLOR
-            list_append(self.graph.top, (unitype) yellowBucket[i], 'i'); // GRAPH_TOP_FREQUENCY
-            list_append(self.graph.top, (unitype) ('A' + i), 'c'); // GRAPH_TOP_LETTER
-            list_append(self.graph.top, (unitype) GRAPH_COLOR_BLACK, 'i'); // GRAPH_TOP_COLOR
-            list_append(self.graph.top, (unitype) blackBucket[i], 'i'); // GRAPH_TOP_FREQUENCY
-        }
-        list_sort_stride(self.graph.top, GRAPH_TOP_NUMBER_OF_FIELDS, GRAPH_TOP_FREQUENCY);
-
+    }
+    self.graph.top = list_init();
+    for (int32_t i = 0; i < 26; i++) {
+        list_append(self.graph.top, (unitype) ('A' + i), 'c'); // GRAPH_TOP_LETTER
+        list_append(self.graph.top, (unitype) GRAPH_COLOR_GREEN, 'i'); // GRAPH_TOP_COLOR
+        list_append(self.graph.top, (unitype) greenBucket[i], 'i'); // GRAPH_TOP_FREQUENCY
+        list_append(self.graph.top, (unitype) ('A' + i), 'c'); // GRAPH_TOP_LETTER
+        list_append(self.graph.top, (unitype) GRAPH_COLOR_YELLOW, 'i'); // GRAPH_TOP_COLOR
+        list_append(self.graph.top, (unitype) yellowBucket[i], 'i'); // GRAPH_TOP_FREQUENCY
+        list_append(self.graph.top, (unitype) ('A' + i), 'c'); // GRAPH_TOP_LETTER
+        list_append(self.graph.top, (unitype) GRAPH_COLOR_BLACK, 'i'); // GRAPH_TOP_COLOR
+        list_append(self.graph.top, (unitype) blackBucket[i], 'i'); // GRAPH_TOP_FREQUENCY
+    }
+    list_sort_stride(self.graph.top, GRAPH_TOP_NUMBER_OF_FIELDS, GRAPH_TOP_FREQUENCY);
+    if (self.overrideFinal == 0) {
         /* calculate final rankings */
         self.finalRankings = list_init();
         for (int32_t i = 0; i < self.validWords -> length; i++) {
@@ -269,7 +278,6 @@ int32_t init() {
         }
         self.finalRankings = list_read(finalfp);
         fclose(finalfp);
-        self.mode = CWORDLE_MODE_TREE;
     }
 
     /* graph */

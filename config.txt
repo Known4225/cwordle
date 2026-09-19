@@ -1,4 +1,4 @@
 removeDuplicates: 0
 numberOfBars: 50
-strictData: 1
+strictData: 0
 overrideFinal: 1
