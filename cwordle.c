@@ -9,7 +9,7 @@ Written by Ryan Srichai, 19.09.2026
 
 typedef enum {
     CWORLDLE_MODE_GRAPH = 0,
-    CWORDLE_MODE_TREE = 1,
+    CWORDLE_MODE_CHAIN = 1,
 } cwordle_mode_t;
 
 enum {
@@ -77,7 +77,10 @@ typedef struct {
     list_t *swordleBest; // list of best words from swordle (and variance of each)
     list_t *finalRankings; // words ranked by their combined score (using (1 / variance from swordle) * (frequency of applicability))
     int8_t overrideFinal;
+    int32_t totalPairs;
     uint32_t lookup[26]; // array of bitfields for each character (for use in get_possible_words function)
+    int8_t lookupMatrix[36]; // starting matrix for wagner-fischer algorithm (for use in get_edit_distance)
+    int32_t search; // number of top words to search for blobs of (a blob is like a chain but with a hub and spokes topology)
     char keys[8];
     cwordle_graph_t graph;
 } cwordle_t;
@@ -89,6 +92,9 @@ void wordle_simulate(int32_t *greenBucket, int32_t *yellowBucket, int32_t *black
 void wordle_simulate_points(list_t *points, int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer);
 void wordle_simulate_check_words(int32_t *greenBucket, int32_t *yellowBucket, int32_t *blackBucket, const char *guess, const char *answer);
 int32_t get_possible_words(list_t *output, char *canvas, list_t *wordSet);
+double get_chain_coverage(list_t *chain);
+int8_t get_edit_distance(const char *word1, const char *word2);
+list_t *get_adjacent_words(char *word, list_t *wordSet);
 void cwordle_set_color(int32_t color);
 
 int8_t cwordle_colors[] = {
@@ -164,10 +170,20 @@ int32_t init() {
         if (streq(configFile -> data[i].r -> data[0].s, "overrideFinal")) {
             sscanf(configFile -> data[i].r -> data[1].s, "%hhd", &self.overrideFinal);
         }
+        if (streq(configFile -> data[i].r -> data[0].s, "search")) {
+            sscanf(configFile -> data[i].r -> data[1].s, "%d", &self.search);
+        }
     }
     /* get_possible_words */
     for (int32_t i = 0; i < 26; i++) {
         self.lookup[i] = 1 << i;
+    }
+    /* get_edit_distance */
+    for (int32_t i = 0; i < 6; i++) {
+        self.lookupMatrix[i] = i;
+    }
+    for (int32_t i = 1; i < 6; i++) {
+        self.lookupMatrix[i * 6] = i;
     }
     /* generate pastWords */
     self.pastWords = list_init();
@@ -195,6 +211,7 @@ int32_t init() {
     int32_t greenBucket[26] = {0};
     int32_t yellowBucket[26] = {0};
     int32_t blackBucket[26] = {0};
+    self.totalPairs = 0;
     if (self.graph.strict) {
         /* in strict mode, we obtain 5 * (self.pastWords -> length - 1) data points by applying the question from each word to the next in the sequence (collect 5 data points from applying the word on 01.01.2025 to 02.01.2025) */
         for (int32_t i = 0; i < self.pastWords -> length - 1; i++) {
@@ -203,6 +220,7 @@ int32_t init() {
             } else {
                 wordle_simulate_check_words(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[i + 1].s);
             }
+            self.totalPairs++;
             if (i % 10 == 0 && self.overrideFinal == 0) {
                 turtle_clear();
                 turtle_pen_color(0, 0, 0);
@@ -222,6 +240,7 @@ int32_t init() {
                 if (i == j) {
                     continue;
                 }
+                self.totalPairs++;
                 if (self.overrideFinal) {
                     wordle_simulate(greenBucket, yellowBucket, blackBucket, self.pastWords -> data[i].s, self.pastWords -> data[j].s);
                 } else {
@@ -279,6 +298,134 @@ int32_t init() {
         self.finalRankings = list_read(finalfp);
         fclose(finalfp);
     }
+
+    /* find chains */
+    list_t *testChain = list_init();
+    // list_append(testChain, (unitype) "TIARE", 's');
+    // list_append(testChain, (unitype) "ROATE", 's');
+    // list_append(testChain, (unitype) "TARSE", 's');
+    // list_append(testChain, (unitype) "SOARE", 's');
+    // list_append(testChain, (unitype) "IRATE", 's');
+    // list_append(testChain, (unitype) "STARE", 's');
+    // list_append(testChain, (unitype) "RAISE", 's');
+    // list_append(testChain, (unitype) "SATER", 's');
+    // list_append(testChain, (unitype) "RAILE", 's');
+    // list_append(testChain, (unitype) "ARISE", 's');
+    // list_append(testChain, (unitype) "ORATE", 's');
+    // list_append(testChain, (unitype) "STRAE", 's');
+    // list_append(testChain, (unitype) "TALER", 's');
+    // list_append(testChain, (unitype) "REAST", 's');
+    // list_append(testChain, (unitype) "TASER", 's');
+    // list_append(testChain, (unitype) "LATER", 's');
+
+    // list_append(testChain, (unitype) "QAJAQ", 's');
+    // list_append(testChain, (unitype) "JEEZE", 's');
+    // list_append(testChain, (unitype) "XVIII", 's');
+    // list_append(testChain, (unitype) "JAFFA", 's');
+    // list_append(testChain, (unitype) "MAMMA", 's');
+    // list_append(testChain, (unitype) "PZAZZ", 's');
+    // list_append(testChain, (unitype) "AGGAG", 's');
+    // list_append(testChain, (unitype) "FEEZE", 's');
+    // list_append(testChain, (unitype) "MEZZE", 's');
+    // list_append(testChain, (unitype) "MAQAM", 's');
+    // list_append(testChain, (unitype) "JAZZY", 's');
+    // list_append(testChain, (unitype) "EXEME", 's');
+    // list_append(testChain, (unitype) "PEEPE", 's');
+    // list_append(testChain, (unitype) "EXEEM", 's');
+    // list_append(testChain, (unitype) "IMMIX", 's');
+    // list_append(testChain, (unitype) "ADDAX", 's');
+
+    list_append(testChain, (unitype) "ROATE", 's');
+    // list_append(testChain, (unitype) "SIDER", 's');
+    // list_append(testChain, (unitype) "SEINE", 's');
+    // list_append(testChain, (unitype) "SLIMY", 's');
+    // list_append(testChain, (unitype) "NALAS", 's');
+    // list_append(testChain, (unitype) "DOOLY", 's');
+    // list_append(testChain, (unitype) "DOVER", 's');
+    // list_append(testChain, (unitype) "SLANK", 's');
+    // list_append(testChain, (unitype) "LENES", 's');
+    // list_append(testChain, (unitype) "SNOOL", 's');
+    // list_append(testChain, (unitype) "SHUNT", 's');
+    // list_append(testChain, (unitype) "CURLS", 's');
+    // list_append(testChain, (unitype) "CROON", 's');
+    // list_append(testChain, (unitype) "SLAKE", 's');
+    // list_append(testChain, (unitype) "GENAL", 's');
+    // list_append(testChain, (unitype) "TAUNT", 's');
+    // list_append(testChain, (unitype) "CRANS", 's');
+    // list_append(testChain, (unitype) "MACLE", 's');
+    // list_append(testChain, (unitype) "LAGER", 's');
+    // list_append(testChain, (unitype) "SLEET", 's');
+    // list_append(testChain, (unitype) "PRISE", 's');
+    // list_append(testChain, (unitype) "CARRS", 's');
+    // list_append(testChain, (unitype) "SALON", 's');
+    // list_append(testChain, (unitype) "CLOSE", 's');
+    // list_append(testChain, (unitype) "ENTER", 's');
+    // list_append(testChain, (unitype) "ARMOR", 's');
+    // list_append(testChain, (unitype) "TRIPS", 's');
+    // list_append(testChain, (unitype) "SPOOT", 's');
+    // list_append(testChain, (unitype) "TOMIN", 's');
+    // list_append(testChain, (unitype) "CLEAT", 's');
+
+    // printf("coverage: %lf\n", get_chain_coverage(testChain));
+
+    // printf("%d\n", get_edit_distance("TIARE", "ROATE"));
+    // printf("%d\n", get_edit_distance("CLASS", "FAULT"));
+    // printf("%d\n", get_edit_distance("ROATE", "ROATE"));
+    // printf("%d\n", get_edit_distance("ROATE", "ROSTE"));
+
+    if (self.search != 0) {
+        list_t *chains = list_init();
+        for (int32_t i = 0; i < self.search; i++) {
+            list_t *adj = get_adjacent_words(self.finalRankings -> data[i * FINAL_NUMBER_OF_FIELDS].s, self.validWords);
+            list_insert(adj, 0, self.finalRankings -> data[i * FINAL_NUMBER_OF_FIELDS], 's');
+            double score = 0;
+            for (int32_t j = 0; j < adj -> length; j++) {
+                int32_t index = list_find(self.finalRankings, adj -> data[j], 's');
+                if (index == -1) {
+                    printf("ERROR: Could not find %s in finalRankings\n", adj -> data[j].s);
+                    continue;
+                }
+                score += self.finalRankings -> data[index + FINAL_SCORE].d;
+            }
+            score /= 1000;
+            double coverage = get_chain_coverage(adj);
+            score *= coverage;
+            list_insert(adj, 0, (unitype) coverage, 'd');
+            list_insert(adj, 0, (unitype) score, 'd');
+            list_append(chains, (unitype) score, 'd');
+            list_append(chains, (unitype) adj, 'r');
+            turtle_clear();
+            turtle_pen_color(0, 0, 0);
+            turtle_rectangle(-200, -10, 200, 10);
+            cwordle_set_color(CWORDLE_COLOR_GREEN);
+            double length = (198 * 2.0 * i) / self.search - 198;
+            turtle_rectangle(-198, -8, length, 8);
+            turtle_update();
+        }
+        list_sort_stride(chains, 2, 0);
+        for (int32_t i = chains -> length - 2; i >= 0; i -= 2) {
+            list_delete(chains, i);
+        }
+        list_print(chains);
+    }
+
+    list_t *cares = get_adjacent_words("CARES", self.validWords);
+    list_insert(cares, 0, (unitype) "CARES", 's');
+    list_t *caresSorted = list_init();
+    for (int32_t i = 0; i < cares -> length; i++) {
+        int32_t index = list_find(self.finalRankings, cares -> data[i], 's');
+        if (index == -1) {
+            printf("ERROR: Could not find %s in finalRankings\n", cares -> data[i].s);
+            continue;
+        }
+        list_append(caresSorted, (unitype) (1.0 / self.finalRankings -> data[index + FINAL_VARIANCE].d * 1000), 'd');
+        list_append(caresSorted, cares -> data[i], 's');
+    }
+    list_sort_stride(caresSorted, 2, 0);
+    for (int32_t i = caresSorted -> length - 2; i >= 0; i -= 2) {
+        list_delete(caresSorted, i);
+    }
+    list_print(caresSorted);
 
     /* graph */
     self.graph.leftX = -280;
@@ -341,7 +488,7 @@ void mouse() {
     if (turtle_key_pressed(GLFW_KEY_SPACE) && turtle_key_pressed(GLFW_KEY_LEFT_CONTROL)) {
         if (self.keys[KEY_SPACE] == 0) {
             self.keys[KEY_SPACE] = 1;
-            FILE *fp = fopen("cwordle-final-rankings.list", "w");
+            FILE *fp = fopen("cwordle-final-rankings-coverage.list", "w");
             list_write(fp, self.finalRankings);
             fclose(fp);
         }
@@ -459,7 +606,6 @@ void wordle_simulate_check_words(int32_t *greenBucket, int32_t *yellowBucket, in
     get_possible_words(self.validWordsEligible, constructedCanvas, self.validWords);
 }
 
-/* returns a list of words that could be the word given a canvas and a word set */
 int32_t get_possible_words(list_t *output, char *canvas, list_t *wordSet) {
     if (output -> length != wordSet -> length) {
         return 0;
@@ -467,46 +613,39 @@ int32_t get_possible_words(list_t *output, char *canvas, list_t *wordSet) {
     /* create word whitelist and global count */
     int8_t count[26] = {0}; // need to have at least count[letter] of a particular letter, if count[letter] is negative then you need to have exactly -count[letter] in a word
     uint32_t whitelist[5] = {0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF}; // so i just learned today that you can only do one of these when it is 0
-    for (int32_t j = 0; j < 6; j++) {
-        int8_t currentCount[26] = {0};
-        for (int32_t i = 0; i < 5; i++) {
-            if (canvas[j * 10 + i * 2] == 0) {
-                goto GET_POSSIBLE_WORDS_END_LOOP;
-            }
-            switch (canvas[j * 10 + i * 2 + 1]) {
-                case CWORDLE_COLOR_GREEN:;
-                    if (currentCount[canvas[j * 10 + i * 2] - 'A'] < 0) {
-                        currentCount[canvas[j * 10 + i * 2] - 'A']--;
-                    } else {
-                        currentCount[canvas[j * 10 + i * 2] - 'A']++;
+    int8_t currentCount[26] = {0};
+    for (int32_t i = 0; i < 5; i++) {
+        switch (canvas[i * 2 + 1]) {
+            case CWORDLE_COLOR_GREEN:;
+                if (currentCount[canvas[i * 2] - 'A'] < 0) {
+                    currentCount[canvas[i * 2] - 'A']--;
+                } else {
+                    currentCount[canvas[i * 2] - 'A']++;
+                }
+                whitelist[i] = self.lookup[canvas[i * 2] - 'A']; // canvas uses capital letters
+            break;
+            case CWORDLE_COLOR_YELLOW:;
+                for (int32_t k = 0; k < i; k++) {
+                    if (canvas[k * 2] == canvas[i * 2] && canvas[k * 2 + 1] == CWORDLE_COLOR_BLACK) {
+                        // printf("getPossibleWords: Invalid canvas configuration %d %d\n", i, j);
+                        return 0;
                     }
-                    whitelist[i] = self.lookup[canvas[j * 10 + i * 2] - 'A']; // canvas uses capital letters
-                break;
-                case CWORDLE_COLOR_YELLOW:;
-                    for (int32_t k = 0; k < i; k++) {
-                        if (canvas[j * 10 + k * 2] == canvas[j * 10 + i * 2] && canvas[j * 10 + k * 2 + 1] == CWORDLE_COLOR_BLACK) {
-                            // printf("getPossibleWords: Invalid canvas configuration %d %d\n", i, j);
-                            return 0;
-                        }
+                }
+                currentCount[canvas[i * 2] - 'A']++; // cannot ever have currentCountDirection set as a black letter can never proceed a yellow letter
+                whitelist[i] &= ~self.lookup[canvas[i * 2] - 'A']; // canvas uses capital letters
+            break;
+            case CWORDLE_COLOR_BLACK:;
+                uint32_t blacklist = ~self.lookup[canvas[i * 2] - 'A']; // canvas uses capital letters
+                int32_t startingIndex = i;
+                if (currentCount[canvas[i * 2] - 'A'] == 0) {
+                    for (int32_t k = 0; k < 5; k++) {
+                        whitelist[k] &= blacklist;
                     }
-                    currentCount[canvas[j * 10 + i * 2] - 'A']++; // cannot ever have currentCountDirection set as a black letter can never proceed a yellow letter
-                    whitelist[i] &= ~self.lookup[canvas[j * 10 + i * 2] - 'A']; // canvas uses capital letters
-                break;
-                case CWORDLE_COLOR_BLACK:;
-                    uint32_t blacklist = ~self.lookup[canvas[j * 10 + i * 2] - 'A']; // canvas uses capital letters
-                    int32_t startingIndex = i;
-                    if (currentCount[canvas[j * 10 + i * 2] - 'A'] == 0) {
-                        for (int32_t k = 0; k < 5; k++) {
-                            whitelist[k] &= blacklist;
-                        }
-                    } else {
-                        currentCount[canvas[j * 10 + i * 2] - 'A'] *= -1;
-                        whitelist[i] &= ~self.lookup[canvas[j * 10 + i * 2] - 'A'];
-                    }
-                break;
-                default:
-                break;
-            }
+                } else {
+                    currentCount[canvas[i * 2] - 'A'] *= -1;
+                    whitelist[i] &= ~self.lookup[canvas[i * 2] - 'A'];
+                }
+            break;
         }
         for (int32_t i = 0; i < 26; i++) {
             if (count[i] >= 0 && abs(currentCount[i]) >= count[i]) {
@@ -514,7 +653,6 @@ int32_t get_possible_words(list_t *output, char *canvas, list_t *wordSet) {
             }
         }
     }
-    GET_POSSIBLE_WORDS_END_LOOP:;
     /* gather all possible words given canvas into output */
     int32_t outputLen = 0;
     for (int32_t i = 0; i < wordSet -> length; i++) {
@@ -547,6 +685,172 @@ int32_t get_possible_words(list_t *output, char *canvas, list_t *wordSet) {
         }
     }
     return outputLen;
+}
+
+int32_t is_covered(const char *guess, const char *answer, list_t *wordSet) {
+    /* wordle simulate */
+    int8_t cache[26] = {0};
+    int8_t colors[5] = {0};
+    char canvas[12] = {0};
+    for (int32_t i = 0; i < 5; i++) {
+        canvas[i * 2] = guess[i];
+        if (guess[i] == answer[i]) {
+            colors[i] = GRAPH_COLOR_GREEN;
+        } else {
+            cache[answer[i] - 'A']++;
+        }
+    }
+    for (int32_t i = 0; i < 5; i++) {
+        int8_t letter = guess[i];
+        if (colors[i] == GRAPH_COLOR_BLACK) {
+            if (cache[letter - 'A'] > 0 && (answer[0] == letter || answer[1] == letter || answer[2] == letter || answer[3] == letter || answer[4] == letter)) {
+                cache[letter - 'A']--;
+                colors[i] = GRAPH_COLOR_YELLOW;
+            }
+        }
+        canvas[i * 2 + 1] = colors[i];
+    }
+
+    /* check possible words */
+    /* create word whitelist and global count */
+    int8_t count[26] = {0}; // need to have at least count[letter] of a particular letter, if count[letter] is negative then you need to have exactly -count[letter] in a word
+    uint32_t whitelist[5] = {0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF}; // so i just learned today that you can only do one of these when it is 0
+    int8_t currentCount[26] = {0};
+    for (int32_t i = 0; i < 5; i++) {
+        switch (canvas[i * 2 + 1]) {
+            case CWORDLE_COLOR_GREEN:;
+                if (currentCount[canvas[i * 2] - 'A'] < 0) {
+                    currentCount[canvas[i * 2] - 'A']--;
+                } else {
+                    currentCount[canvas[i * 2] - 'A']++;
+                }
+                whitelist[i] = self.lookup[canvas[i * 2] - 'A']; // canvas uses capital letters
+            break;
+            case CWORDLE_COLOR_YELLOW:;
+                for (int32_t k = 0; k < i; k++) {
+                    if (canvas[k * 2] == canvas[i * 2] && canvas[k * 2 + 1] == CWORDLE_COLOR_BLACK) {
+                        // printf("getPossibleWords: Invalid canvas configuration %d %d\n", i, j);
+                        return 0;
+                    }
+                }
+                currentCount[canvas[i * 2] - 'A']++; // cannot ever have currentCountDirection set as a black letter can never proceed a yellow letter
+                whitelist[i] &= ~self.lookup[canvas[i * 2] - 'A']; // canvas uses capital letters
+            break;
+            case CWORDLE_COLOR_BLACK:;
+                uint32_t blacklist = ~self.lookup[canvas[i * 2] - 'A']; // canvas uses capital letters
+                int32_t startingIndex = i;
+                if (currentCount[canvas[i * 2] - 'A'] == 0) {
+                    for (int32_t k = 0; k < 5; k++) {
+                        whitelist[k] &= blacklist;
+                    }
+                } else {
+                    currentCount[canvas[i * 2] - 'A'] *= -1;
+                    whitelist[i] &= ~self.lookup[canvas[i * 2] - 'A'];
+                }
+            break;
+        }
+    }
+    for (int32_t i = 0; i < 26; i++) {
+        if (count[i] >= 0 && abs(currentCount[i]) >= count[i]) {
+            count[i] = currentCount[i];
+        }
+    }
+    /* gather all possible words given canvas into output */
+    int32_t outputLen = 0;
+    for (int32_t i = 0; i < wordSet -> length; i++) {
+        char *word = wordSet -> data[i].s;
+        char good = 1;
+        int8_t currentCount[26] = {0};
+        /* check whitelist */
+        for (int32_t j = 0; j < 5; j++) {
+            currentCount[word[j] - 'A']++;
+            if ((whitelist[j] & self.lookup[word[j] - 'A']) == 0) { // wordlists use capital letters
+                good = 0;
+                break;
+            }
+        }
+        for (int32_t i = 0; i < 26; i++) {
+            /* check if minimum global count is met */
+            if (abs(count[i]) > currentCount[i]) {
+                good = 0;
+                break;
+            }
+            /* check if exact global count is met (if information is available) */
+            if (count[i] < 0 && currentCount[i] != -count[i]) {
+                good = 0;
+                break;
+            }
+        }
+        if (good) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* returns a percentage */
+double get_chain_coverage(list_t *chain) {
+    int32_t covered = 0;
+    if (self.graph.strict) {
+        /* in strict mode, we obtain 5 * (self.pastWords -> length - 1) data points by applying the question from each word to the next in the sequence (collect 5 data points from applying the word on 01.01.2025 to 02.01.2025) */
+        for (int32_t i = 0; i < self.pastWords -> length - 1; i++) {
+            covered += is_covered(self.pastWords -> data[i].s, self.pastWords -> data[i + 1].s, chain);
+        }
+    } else {
+        /* in non-strict mode, we obtain 5 * (self.pastWords -> length) * (self.pastWords -> length - 1) data points by applying the question to every other word (collect 5 * (self.pastWords -> length - 1) data points from applying the word on 01.01.2025 to every other word) */
+        for (int32_t i = 0; i < self.pastWords -> length; i++) {
+            for (int32_t j = 0; j < self.pastWords -> length; j++) {
+                if (i == j) {
+                    continue;
+                }
+                covered += is_covered(self.pastWords -> data[i].s, self.pastWords -> data[j].s, chain);
+            }
+        }
+    }
+    return (double) covered / self.totalPairs * 100;
+}
+
+int8_t min_three(int8_t a, int8_t b, int8_t c) {
+    if (a < b) {
+        if (a < c) {
+            return a;
+        }
+        return c;
+    } else {
+        if (b < c) {
+            return b;
+        }
+        return c;
+    }
+}
+
+/* compute Levenshtein edit distance between two 5-letter words */
+int8_t get_edit_distance(const char *word1, const char *word2) {
+    int8_t matrix[36];
+    memcpy(matrix, self.lookupMatrix, 36);
+    for (int32_t i = 1; i < 6; i++) {
+        char letter = word1[i - 1];
+        for (int32_t j = 1; j < 6; j++) {
+            int32_t index = i * 6 + j;
+            if (letter == word2[j - 1]) {
+                matrix[index] = matrix[index - 7];
+            } else {
+                matrix[index] = min_three(matrix[index - 1], matrix[index - 6], matrix[index - 7]) + 1;
+            }
+        }
+    }
+    return matrix[35];
+}
+
+/* get all words that are edit distance 1 from this word */
+list_t *get_adjacent_words(char *word, list_t *wordSet) {
+    list_t *output = list_init();
+    for (int32_t i = 0; i < wordSet -> length; i++) {
+        if (get_edit_distance(word, wordSet -> data[i].s) == 1) {
+            list_append(output, wordSet -> data[i], 's');
+        }
+    }
+    return output;
 }
 
 int32_t monthToInt(const char *month) {
