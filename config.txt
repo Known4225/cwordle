@@ -2,4 +2,5 @@ removeDuplicates: 0
 numberOfBars: 50
 strictData: 0
 overrideFinal: 1
-search: 0
+search: -1
+overrideChains: 0

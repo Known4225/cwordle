@@ -294,8 +294,24 @@ RARES
 
 Okay so after taking into account relative frequency of the variations, it turns out the PARES beats out CARES. Here's the table for PARES:
 
+TARES, LARES, NARES, CARES, DARES, HARES, PAREO, GARES, PAREN, PARES, MARES, BARES, PAREU, PATES, FARES, PALES, PANES, WARES, PARED, PORES, VARES, PARIS, PACES, RARES, PARTS, PAGES, PURES, PYRES, PARCS, PAREV, PARDS, PARER, PAVES, PARMS, PAXES, PASES, PERES, PAPES, PARKS, PARRS, PARAS, PARPS
 
+TARES PARES PARES PARES PAREO
+LARES PORES PATES PARIS PAREN
+NARES PURES PALES PARTS PARES
+CARES PYRES PANES PARCS PAREU
+DARES PERES PACES PARDS PARED
+HARES       PAGES PARMS PAREV
+GARES       PAVES PARKS PARER
+PARES       PAXES PARRS
+MARES       PASES PARAS
+BARES       PAPES PARPS
+FARES
+WARES
+VARES
+RARES
 
+PARES has 42 words in its blob, while CARES only has 40. It has 33.58% coverage to CARES' 32.41%. Problem is that 33% is still only 1/3 of cases. We need another hub word with similar coverage but that doesn't overlap with PARES much. Actually we need two more hub words. I think I might know how to find them though.
 
 
 # Key Features

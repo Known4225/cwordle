@@ -81,6 +81,7 @@ typedef struct {
     uint32_t lookup[26]; // array of bitfields for each character (for use in get_possible_words function)
     int8_t lookupMatrix[36]; // starting matrix for wagner-fischer algorithm (for use in get_edit_distance)
     int32_t search; // number of top words to search for blobs of (a blob is like a chain but with a hub and spokes topology)
+    list_t *chains;
     char keys[8];
     cwordle_graph_t graph;
 } cwordle_t;
@@ -374,7 +375,10 @@ int32_t init() {
     // printf("%d\n", get_edit_distance("ROATE", "ROSTE"));
 
     if (self.search != 0) {
-        list_t *chains = list_init();
+        if (self.search == -1) {
+            self.search = self.finalRankings -> length / FINAL_NUMBER_OF_FIELDS;
+        }
+        self.chains = list_init();
         for (int32_t i = 0; i < self.search; i++) {
             list_t *adj = get_adjacent_words(self.finalRankings -> data[i * FINAL_NUMBER_OF_FIELDS].s, self.validWords);
             list_insert(adj, 0, self.finalRankings -> data[i * FINAL_NUMBER_OF_FIELDS], 's');
@@ -392,8 +396,8 @@ int32_t init() {
             score *= coverage;
             list_insert(adj, 0, (unitype) coverage, 'd');
             list_insert(adj, 0, (unitype) score, 'd');
-            list_append(chains, (unitype) score, 'd');
-            list_append(chains, (unitype) adj, 'r');
+            list_append(self.chains, (unitype) score, 'd');
+            list_append(self.chains, (unitype) adj, 'r');
             turtle_clear();
             turtle_pen_color(0, 0, 0);
             turtle_rectangle(-200, -10, 200, 10);
@@ -402,30 +406,51 @@ int32_t init() {
             turtle_rectangle(-198, -8, length, 8);
             turtle_update();
         }
-        list_sort_stride(chains, 2, 0);
-        for (int32_t i = chains -> length - 2; i >= 0; i -= 2) {
-            list_delete(chains, i);
+        list_sort_stride(self.chains, 2, 0);
+        for (int32_t i = self.chains -> length - 2; i >= 0; i -= 2) {
+            list_delete(self.chains, i);
         }
-        list_print(chains);
+        // list_print(self.chains);
     }
+    FILE *bestfp = fopen("cwordle-best-chains.list", "w");
+    list_write(bestfp, self.chains);
+    fclose(bestfp);
 
-    list_t *cares = get_adjacent_words("CARES", self.validWords);
-    list_insert(cares, 0, (unitype) "CARES", 's');
-    list_t *caresSorted = list_init();
-    for (int32_t i = 0; i < cares -> length; i++) {
-        int32_t index = list_find(self.finalRankings, cares -> data[i], 's');
-        if (index == -1) {
-            printf("ERROR: Could not find %s in finalRankings\n", cares -> data[i].s);
-            continue;
-        }
-        list_append(caresSorted, (unitype) (1.0 / self.finalRankings -> data[index + FINAL_VARIANCE].d * 1000), 'd');
-        list_append(caresSorted, cares -> data[i], 's');
-    }
-    list_sort_stride(caresSorted, 2, 0);
-    for (int32_t i = caresSorted -> length - 2; i >= 0; i -= 2) {
-        list_delete(caresSorted, i);
-    }
-    list_print(caresSorted);
+    // list_t *cares = get_adjacent_words("CARES", self.validWords);
+    // list_insert(cares, 0, (unitype) "CARES", 's');
+    // list_t *caresSorted = list_init();
+    // for (int32_t i = 0; i < cares -> length; i++) {
+    //     int32_t index = list_find(self.finalRankings, cares -> data[i], 's');
+    //     if (index == -1) {
+    //         printf("ERROR: Could not find %s in finalRankings\n", cares -> data[i].s);
+    //         continue;
+    //     }
+    //     list_append(caresSorted, (unitype) (1.0 / self.finalRankings -> data[index + FINAL_VARIANCE].d * 1000), 'd');
+    //     list_append(caresSorted, cares -> data[i], 's');
+    // }
+    // list_sort_stride(caresSorted, 2, 0);
+    // for (int32_t i = caresSorted -> length - 2; i >= 0; i -= 2) {
+    //     list_delete(caresSorted, i);
+    // }
+    // list_print(caresSorted);
+
+    // list_t *pares = get_adjacent_words("PARES", self.validWords);
+    // list_insert(pares, 0, (unitype) "PARES", 's');
+    // list_t *paresSorted = list_init();
+    // for (int32_t i = 0; i < pares -> length; i++) {
+    //     int32_t index = list_find(self.finalRankings, pares -> data[i], 's');
+    //     if (index == -1) {
+    //         printf("ERROR: Could not find %s in finalRankings\n", pares -> data[i].s);
+    //         continue;
+    //     }
+    //     list_append(paresSorted, (unitype) (1.0 / self.finalRankings -> data[index + FINAL_VARIANCE].d * 1000), 'd');
+    //     list_append(paresSorted, pares -> data[i], 's');
+    // }
+    // list_sort_stride(paresSorted, 2, 0);
+    // for (int32_t i = paresSorted -> length - 2; i >= 0; i -= 2) {
+    //     list_delete(paresSorted, i);
+    // }
+    // list_print(paresSorted);
 
     /* graph */
     self.graph.leftX = -280;
@@ -488,9 +513,12 @@ void mouse() {
     if (turtle_key_pressed(GLFW_KEY_SPACE) && turtle_key_pressed(GLFW_KEY_LEFT_CONTROL)) {
         if (self.keys[KEY_SPACE] == 0) {
             self.keys[KEY_SPACE] = 1;
-            FILE *fp = fopen("cwordle-final-rankings-coverage.list", "w");
-            list_write(fp, self.finalRankings);
-            fclose(fp);
+            FILE *finalfp = fopen("cwordle-final-rankings.list", "w");
+            list_write(finalfp, self.finalRankings);
+            fclose(finalfp);
+            FILE *bestfp = fopen("cwordle-best-chains.list", "w");
+            list_write(bestfp, self.chains);
+            fclose(bestfp);
         }
     } else {
         self.keys[KEY_SPACE] = 0;
@@ -971,7 +999,7 @@ void parse_ribbon_output() {
 
 int main(int argc, char *argv[]) {
     /* create window */
-    GLFWwindow *window = turtle_create_window_icon(TURTLE_WINDOW_DEFAULT_WIDTH, TURTLE_WINDOW_DEFAULT_HEIGHT, "turtle demo", "images/thumbnail.png");
+    GLFWwindow *window = turtle_create_window_icon(TURTLE_WINDOW_DEFAULT_WIDTH, TURTLE_WINDOW_DEFAULT_HEIGHT, "cwordle", "images/thumbnail.png");
     if (window == NULL) {
         return -1; // failed to create window
     }
